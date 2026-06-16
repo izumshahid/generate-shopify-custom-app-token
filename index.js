@@ -1,17 +1,46 @@
+require("dotenv").config();
+
 const express = require("express");
 const axios = require("axios");
 
 // ===== APP CREDENTIALS =====
-// TODO: Update these 3 values when using a different app
-const CLIENT_ID = "0646xxxxxxxxxxxxxxxxxx";
-const CLIENT_SECRET = "shpss_xxxxxxxxxxxxxxxxxx"; // ROTATE THIS!
-const SCOPES = "read_customers,read_orders,read_products";
+// All credentials are loaded from environment variables (see .env.example).
+// Copy .env.example to .env and fill in your app's values — never hardcode
+// secrets in this file.
+const CLIENT_ID = process.env.CLIENT_ID;
+const CLIENT_SECRET = process.env.CLIENT_SECRET;
+const SCOPES =
+  process.env.SCOPES || "write_companies,read_customers,read_orders,read_products";
 
-const REDIRECT_URI = "http://localhost:3000/callback";
-const PORT = 3000;
+const REDIRECT_URI = process.env.REDIRECT_URI || "http://localhost:3000/callback";
+const PORT = process.env.PORT || 3000;
 // ============================
 
+if (!CLIENT_ID || !CLIENT_SECRET) {
+  console.error(
+    "\n❌ Missing credentials. Set CLIENT_ID and CLIENT_SECRET in a .env file.\n" +
+      "   Copy .env.example to .env and fill in your app's values.\n",
+  );
+  process.exit(1);
+}
+
 const app = express();
+
+/**
+ * Normalize whatever the user typed into a full *.myshopify.com domain.
+ * Accepts: "mystore", "mystore.myshopify.com", or a full URL with
+ * "https://" and/or a trailing slash — and always returns
+ * "mystore.myshopify.com".
+ */
+function normalizeShop(input) {
+  if (!input) return input;
+  let shop = input.trim().toLowerCase();
+  // Strip protocol and any path/query if the user pasted a full URL.
+  shop = shop.replace(/^https?:\/\//, "").split("/")[0];
+  // Strip a trailing ".myshopify.com" (with or without it) so we can re-add cleanly.
+  shop = shop.replace(/\.myshopify\.com$/, "");
+  return `${shop}.myshopify.com`;
+}
 
 /**
  * Root endpoint — entry point of the script.
@@ -24,7 +53,7 @@ const app = express();
  * │   - App URL:      http://localhost:3000                         │
  * │   - Redirect URL: http://localhost:3000/callback                │
  * │                                                                 │
- * │ TODO 2: Update the constants at the top of this file:           │
+ * │ TODO 2: Update the values in your .env file:                    │
  * │   - CLIENT_ID      → new app's client ID                        │
  * │   - CLIENT_SECRET  → new app's client secret                    │
  * │   - SCOPES         → scopes the new app needs                   │
@@ -47,28 +76,32 @@ const app = express();
  * └─────────────────────────────────────────────────────────────────┘
  */
 app.get("/", (req, res) => {
-  const shop = req.query.shop;
+  const shop = req.query.shop ? normalizeShop(req.query.shop) : undefined;
 
   // If Shopify just redirected back here after install confirmation,
   // automatically kick off the OAuth flow to get the code → token.
   if (shop) {
     console.log(`\n✓ App installed on ${shop} — starting OAuth flow...`);
-    return res.redirect(`/install?shop=${shop}`);
+    return res.redirect(`/install?shop=${encodeURIComponent(shop)}`);
   }
 
   // Otherwise, show a simple form to manually trigger the flow
   res.send(`
     <body style="font-family:sans-serif;padding:40px;background:#0e1117;color:#fff;max-width:600px;margin:auto">
       <h2>🛍️ Shopify Token Generator</h2>
-      <p>Enter the store domain to start OAuth:</p>
+      <p>Enter your store handle to start OAuth:</p>
       <form action="/install" method="get">
-        <input name="shop" placeholder="yourstore.myshopify.com"
+        <input name="shop" placeholder="yourstore"
           style="padding:10px;width:300px;border-radius:4px;border:1px solid #444;background:#1e2128;color:#fff" />
         <button type="submit"
           style="padding:10px 20px;background:#5a31f4;color:#fff;border:none;border-radius:4px;cursor:pointer">
           Get Token
         </button>
       </form>
+      <p style="color:#888;font-size:13px;margin-top:8px">
+        Just paste the handle (e.g. <code>yourstore</code>) — we'll add
+        <code>.myshopify.com</code> automatically.
+      </p>
       <hr style="margin-top:30px;border-color:#333" />
       <p style="color:#888;font-size:13px">
         Current app: <code>${CLIENT_ID.slice(0, 12)}...</code><br/>
@@ -80,10 +113,10 @@ app.get("/", (req, res) => {
 
 // Step 1: Build Shopify OAuth URL and redirect there
 app.get("/install", (req, res) => {
-  const shop = req.query.shop;
-  if (!shop) {
-    return res.status(400).send("Missing ?shop=yourstore.myshopify.com");
+  if (!req.query.shop) {
+    return res.status(400).send("Missing ?shop=yourstore (or yourstore.myshopify.com)");
   }
+  const shop = normalizeShop(req.query.shop);
   const authUrl = `https://${shop}/admin/oauth/authorize?client_id=${CLIENT_ID}&scope=${SCOPES}&redirect_uri=${REDIRECT_URI}`;
   console.log(`→ Redirecting to Shopify auth: ${authUrl}`);
   res.redirect(authUrl);
